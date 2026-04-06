@@ -1,0 +1,16 @@
+# Telegram Bot
+python-telegram-bot[job-queue]==21.3
+ 
+# Google API
+gspread==6.1.2
+google-auth==2.29.0
+google-api-python-client==2.130.0
+
+# Charts
+matplotlib==3.9.0
+numpy==1.26.4
+
+# Timezone support
+pytz==2024.1
+python-dotenv==1.2.2
+ 
