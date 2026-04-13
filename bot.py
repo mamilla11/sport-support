@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+from dotenv import load_dotenv
 import io
 import json
 import logging
@@ -7,7 +9,6 @@ from calendar import monthrange
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 
-from dotenv import load_dotenv
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -152,9 +153,10 @@ def month_bounds(ref: date) -> tuple[date, date]:
 
 
 def counts_by_name(records: list[dict]) -> Counter:
-    def display_name(r):
+    def display_name(r: dict) -> str:
         name     = r.get("Name", "?")
         username = (r.get("Username") or "").strip()
+        # Если Name уже содержит (@...) — не дублируем
         if username and "(@" not in name:
             return f"{name} (@{username})"
         return name
@@ -524,7 +526,7 @@ async def _render_rating(
     buf      = chart_rating(counts, title)
 
     # Caption: text leaderboard
-    lines = [f"*Рейтинг группы {title}*\n"]
+    lines = [f"<b>Рейтинг группы {title}</b>\n"]
     medals = ["🥇", "🥈", "🥉"]
     for i, (n, c) in enumerate(counts.most_common()):
         m = medals[i] if i < 3 else f"{i + 1}."
@@ -537,7 +539,7 @@ async def _render_rating(
         await context.bot.edit_message_media(
             chat_id=chat_id,
             message_id=edit_msg_id,
-            media=InputMediaPhoto(media=buf, caption=caption, parse_mode="Markdown"),
+            media=InputMediaPhoto(media=buf, caption=caption, parse_mode="HTML"),
             reply_markup=kb,
         )
     else:
@@ -545,7 +547,7 @@ async def _render_rating(
             chat_id=chat_id,
             photo=buf,
             caption=caption,
-            parse_mode="Markdown",
+            parse_mode="HTML",
             reply_markup=kb,
         )
 
@@ -569,6 +571,7 @@ async def cmd_i_did_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tz         = pytz.timezone(TIMEZONE)
     today      = datetime.now(tz).date()
     first_name = user.first_name or "Аноним"
+    # Формат записи: "Имя (@username)" — совпадает с нормализованными именами в Calendar/Sheets
     tg_username    = user.username or ""
     calendar_title = f"{first_name} (@{tg_username})" if tg_username else first_name
 
