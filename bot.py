@@ -377,7 +377,7 @@ def chart_rating(counts: Counter, title: str) -> io.BytesIO:
         fig, ax = plt.subplots(figsize=(9, 2.2), facecolor=BG)
         ax.set_facecolor(BG)
         ax.axis("off")
-        ax.text(0.5, 0.5, "Нет данных за этот период 😴",
+        ax.text(0.5, 0.5, "Нет данных за этот период",
                 ha="center", va="center", color=FG, fontsize=14,
                 transform=ax.transAxes)
         return _to_buf(fig)
@@ -392,12 +392,12 @@ def chart_rating(counts: Counter, title: str) -> io.BytesIO:
     _apply_dark(ax)
 
     bar_colors = []
-    medals = []
+    rank_labels = []
     for i in range(n):
-        if   i == 0: bar_colors.append(GOLD);  medals.append("🥇")
-        elif i == 1: bar_colors.append(SILV);  medals.append("🥈")
-        elif i == 2: bar_colors.append(BRNZ);  medals.append("🥉")
-        else:        bar_colors.append(COLORS[i % len(COLORS)]); medals.append(f"{i+1}.")
+        if   i == 0: bar_colors.append(GOLD);  rank_labels.append("#1")
+        elif i == 1: bar_colors.append(SILV);  rank_labels.append("#2")
+        elif i == 2: bar_colors.append(BRNZ);  rank_labels.append("#3")
+        else:        bar_colors.append(COLORS[i % len(COLORS)]); rank_labels.append(f"{i+1}.")
 
     # Reverse so rank 1 is at top
     y_pos   = list(range(n - 1, -1, -1))
@@ -410,7 +410,7 @@ def chart_rating(counts: Counter, title: str) -> io.BytesIO:
                 bar.get_y() + bar.get_height() / 2,
                 str(val), va="center", color=FG, fontsize=12, fontweight="bold")
 
-    y_labels = [f"{medals[i]}  {names[i]}" for i in range(n)]
+    y_labels = [f"{rank_labels[i]}  {names[i]}" for i in range(n)]
     ax.set_yticks(y_pos)
     ax.set_yticklabels(y_labels[::-1], color=FG, fontsize=11)
     ax.set_xticks([])
@@ -563,14 +563,16 @@ async def cmd_i_did_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tz         = pytz.timezone(TIMEZONE)
     today      = datetime.now(tz).date()
     first_name = user.first_name or "Аноним"
+    tg_username    = user.username or ""
+    calendar_title = f"{first_name} (@{tg_username})" if tg_username else first_name
 
     # ── Google Sheets ──────────────────────────────────────────────────────────
     try:
         gc    = _sheets_client()
         sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
         _ensure_headers(sheet)
-        sheet.append_row([str(today), first_name, user.username or "", str(user.id)])
-        logger.info("Sheets ✓  %s  %s", first_name, today)
+        sheet.append_row([str(today), calendar_title, tg_username, str(user.id)])
+        logger.info("Sheets ✓  %s  %s", calendar_title, today)
     except Exception as exc:
         logger.error("Sheets error: %s", exc)
         await update.message.reply_text("⚠️ Не удалось записать в таблицу.")
@@ -581,11 +583,11 @@ async def cmd_i_did_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         svc = _calendar_service()
         svc.events().insert(
             calendarId=CALENDAR_ID,
-            body={"summary": first_name,
+            body={"summary": calendar_title,
                   "start": {"date": str(today)},
                   "end":   {"date": str(today)}},
         ).execute()
-        logger.info("Calendar ✓  %s  %s", first_name, today)
+        logger.info("Calendar ✓  %s  %s", calendar_title, today)
     except Exception as exc:
         logger.error("Calendar error: %s", exc)
         await update.message.reply_text(
