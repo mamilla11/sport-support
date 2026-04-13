@@ -29,6 +29,8 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     JobQueue,
+    MessageHandler,
+    filters,
 )
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
@@ -509,9 +511,10 @@ async def _render_rating(
     period: str,
     edit_msg_id: int | None = None,
     add_text_caption: bool = False,
+    ref_date: date | None = None,   # если задан — используется вместо today
 ) -> None:
     tz    = pytz.timezone(TIMEZONE)
-    today = datetime.now(tz).date()
+    today = ref_date or datetime.now(tz).date()
 
     try:
         records = load_records()
@@ -574,7 +577,6 @@ async def cmd_i_did_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Формат записи: "Имя (@username)" — совпадает с нормализованными именами в Calendar/Sheets
     tg_username    = user.username or ""
     calendar_title = f"{first_name} (@{tg_username})" if tg_username else first_name
-
     # ── Google Sheets ──────────────────────────────────────────────────────────
     try:
         gc    = _sheets_client()
@@ -655,10 +657,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ─── Weekly auto-job ───────────────────────────────────────────────────────────
 
 async def job_weekly_stats(context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Запускается в понедельник — показываем прошедшую неделю (пн–вс)
+    tz           = pytz.timezone(TIMEZONE)
+    last_week    = datetime.now(tz).date() - timedelta(days=7)
     await _render_rating(
         context,
         chat_id=GROUP_CHAT_ID,
         period="week",
+        ref_date=last_week,
     )
 
 
@@ -669,6 +675,11 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start",    cmd_start))
     app.add_handler(CommandHandler("i_did_it", cmd_i_did_it))
+    # Обрабатываем /i_did_it в подписи к медиа (фото, видео, документ)
+    app.add_handler(MessageHandler(
+        filters.CaptionRegex(r"(?i)^/i_did_it") & (filters.PHOTO | filters.VIDEO | filters.Document.ALL),
+        cmd_i_did_it,
+    ))
     app.add_handler(CommandHandler("my_stats", cmd_my_stats))
     app.add_handler(CommandHandler("rating",   cmd_rating))
     app.add_handler(CallbackQueryHandler(callback_handler))
