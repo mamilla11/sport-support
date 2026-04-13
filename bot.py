@@ -152,7 +152,13 @@ def month_bounds(ref: date) -> tuple[date, date]:
 
 
 def counts_by_name(records: list[dict]) -> Counter:
-    return Counter(r.get("Name", "?") for r in records)
+    def display_name(r):
+        name     = r.get("Name", "?")
+        username = (r.get("Username") or "").strip()
+        if username and "(@" not in name:
+            return f"{name} (@{username})"
+        return name
+    return Counter(display_name(r) for r in records)
 
 
 def counts_by_week(records: list[dict]) -> dict[date, int]:
@@ -412,7 +418,7 @@ def chart_rating(counts: Counter, title: str) -> io.BytesIO:
 
     y_labels = [f"{rank_labels[i]}  {names[i]}" for i in range(n)]
     ax.set_yticks(y_pos)
-    ax.set_yticklabels(y_labels[::-1], color=FG, fontsize=11)
+    ax.set_yticklabels(y_labels, color=FG, fontsize=11)
     ax.set_xticks([])
     ax.set_xlim(0, max_val * 1.20)
     ax.set_title(f"  Рейтинг группы  ·  {title}",
