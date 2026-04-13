@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 
+"""
+Telegram-бот для отслеживания тренировок группы.
+
+Команды:
+  /i_did_it  — зафиксировать тренировку (запись в Google Sheets + Calendar)
+  /my_stats  — моя личная статистика с графиком (неделя / месяц / всё время)
+  /rating    — рейтинг всех участников группы (неделя / месяц / всё время)
+
+Еженедельно (день/время задаётся через STATS_DAY, STATS_HOUR, STATS_MINUTE)
+бот автоматически отправляет сводку недели в группу.
+"""
+
 from dotenv import load_dotenv
 import io
 import json
@@ -569,24 +581,39 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def cmd_i_did_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user       = update.effective_user
-    tz         = pytz.timezone(TIMEZONE)
-    today      = datetime.now(tz).date()
-    first_name = user.first_name or "Аноним"
-    # Формат записи: "Имя (@username)" — совпадает с нормализованными именами в Calendar/Sheets
+_DAY_NAMES_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+_MON_NAMES_RU = ["", "янв", "фев", "мар", "апр", "май", "июн",
+                 "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+
+def _checkin_kb(today: date) -> InlineKeyboardMarkup:
+    """Клавиатура выбора дня: сегодня + 6 предыдущих дней, по 2 кнопки в ряд."""
+    buttons = []
+    for i in range(7):
+        d        = today - timedelta(days=i)
+        day_name = _DAY_NAMES_RU[d.weekday()]
+        label    = f"Сегодня ({day_name})" if i == 0 else f"{d.day} {_MON_NAMES_RU[d.month]} ({day_name})"
+        buttons.append(InlineKeyboardButton(label, callback_data=f"checkin|{d.isoformat()}"))
+    rows = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
+    return InlineKeyboardMarkup(rows)
+
+
+async def _record_workout(user, target_date: date, reply_func) -> None:
+    """Записывает тренировку в Sheets и Calendar для указанной даты."""
+    first_name     = user.first_name or "Аноним"
     tg_username    = user.username or ""
     calendar_title = f"{first_name} (@{tg_username})" if tg_username else first_name
+
     # ── Google Sheets ──────────────────────────────────────────────────────────
     try:
         gc    = _sheets_client()
         sheet = gc.open_by_key(SPREADSHEET_ID).sheet1
         _ensure_headers(sheet)
-        sheet.append_row([str(today), calendar_title, tg_username, str(user.id)])
-        logger.info("Sheets ✓  %s  %s", calendar_title, today)
+        sheet.append_row([str(target_date), calendar_title, tg_username, str(user.id)])
+        logger.info("Sheets ✓  %s  %s", calendar_title, target_date)
     except Exception as exc:
         logger.error("Sheets error: %s", exc)
-        await update.message.reply_text("⚠️ Не удалось записать в таблицу.")
+        await reply_func("⚠️ Не удалось записать в таблицу.")
         return
 
     # ── Google Calendar ────────────────────────────────────────────────────────
@@ -595,19 +622,27 @@ async def cmd_i_did_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         svc.events().insert(
             calendarId=CALENDAR_ID,
             body={"summary": calendar_title,
-                  "start": {"date": str(today)},
-                  "end":   {"date": str(today)}},
+                  "start": {"date": str(target_date)},
+                  "end":   {"date": str(target_date)}},
         ).execute()
-        logger.info("Calendar ✓  %s  %s", calendar_title, today)
+        logger.info("Calendar ✓  %s  %s", calendar_title, target_date)
     except Exception as exc:
         logger.error("Calendar error: %s", exc)
-        await update.message.reply_text(
-            f"✅ {first_name}, записано в таблицу!\n"
-            "⚠️ Но в Календарь добавить не получилось."
-        )
+        await reply_func(f"✅ {first_name}, записано в таблицу!\n⚠️ Но в Календарь добавить не получилось.")
         return
 
-    await update.message.reply_text(f"✅ {first_name}, зафиксировано! Так держать 💪")
+    day_name = _DAY_NAMES_RU[target_date.weekday()]
+    date_str = f"{target_date.day} {_MON_NAMES_RU[target_date.month]} ({day_name})"
+    await reply_func(f"✅ {first_name}, зафиксировано за {date_str}! Так держать 💪")
+
+
+async def cmd_i_did_it(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    tz    = pytz.timezone(TIMEZONE)
+    today = datetime.now(tz).date()
+    await update.message.reply_text(
+        "За какой день зафиксировать тренировку?",
+        reply_markup=_checkin_kb(today),
+    )
 
 
 async def cmd_my_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -642,7 +677,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_id    = query.message.chat_id
     msg_id     = query.message.message_id
 
-    if parts[0] == "my" and len(parts) == 3:
+    if parts[0] == "checkin" and len(parts) == 2:
+        target_date = date.fromisoformat(parts[1])
+        # Убираем клавиатуру и записываем тренировку
+        await query.edit_message_reply_markup(reply_markup=None)
+        await _record_workout(
+            user=query.from_user,
+            target_date=target_date,
+            reply_func=lambda text: query.message.reply_text(text),
+        )
+
+    elif parts[0] == "my" and len(parts) == 3:
         _, user_id_str, period = parts
         user_id = int(user_id_str)
         # Look up name from message caption or fallback to sender
